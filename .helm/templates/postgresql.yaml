@@ -1,0 +1,157 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  selector:
+    matchLabels:
+      component: postgres
+  serviceName: postgres
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        component: postgres
+    spec:
+      imagePullSecrets:
+      - name: registrysecret
+      priorityClassName: develop
+      containers:
+      - name: postgres
+        image: postgres:14.3
+        args:
+          - -c
+          - config_file=/etc/postgresql/postgresql.conf
+        env:
+        - name: POSTGRES_USER
+          value: {{ (pluck .Values.werf.env .Values.db.user | first | default .Values.db.user._default) | quote }}
+        - name: POSTGRES_PASSWORD
+          value: {{ (pluck .Values.werf.env .Values.db.password | first | default .Values.db.password._default) | quote }}
+        - name: PGDATA
+          value: "/data/pg_data"
+        - name: POSTGRES_DB
+          value: {{ (pluck .Values.werf.env .Values.db.name | first | default .Values.db.name._default) | quote }}
+        ports:
+        - name: postgres
+          containerPort: 5432
+        readinessProbe:
+          exec:
+            command: ["sh", "-ic", "psql -h 127.0.0.1 -U $POSTGRES_USER -q -d $POSTGRES_DB -c 'SELECT 1'"]
+        lifecycle:
+          preStop:
+            exec:
+              command: ["gosu", "postgres", "pg_ctl", "-m", "fast", "-w", "stop"]
+        resources:
+          requests:
+            cpu: {{ (pluck .Values.werf.env .Values.db.resources.requests.cpu | first | default .Values.db.resources.requests.cpu._default) }}
+            memory: {{ (pluck .Values.werf.env .Values.db.resources.requests.memory | first | default .Values.db.resources.requests.memory._default) }}
+          limits:
+            memory: {{ (pluck .Values.werf.env .Values.db.resources.limits.memory | first | default .Values.db.resources.limits.memory._default) }}
+        volumeMounts:
+        - name: pg-data
+          mountPath: /data
+        - name: config
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+      volumes:
+      - name: config
+        configMap:
+          name: postgres-config
+  volumeClaimTemplates:
+  - metadata:
+      name: pg-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "localstorage"
+      resources:
+        requests:
+          storage: 500Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  clusterIP: None
+  selector:
+    component: postgres
+  ports:
+  - name: postgres
+    port: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-external
+spec:
+  externalTrafficPolicy: Cluster
+  selector:
+    component: postgres
+  ports:
+  - name: postgres
+    port: 5432
+  type: NodePort
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: postgres-veverse-{{ .Values.werf.env }}
+spec:
+  accessModes:
+  - ReadWriteOnce
+  capacity:
+    storage: 500Gi
+  local:
+    path: /mnt/local-storage/postgres-veverse-{{ .Values.werf.env }}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - vrms-09
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: localstorage
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: job-create-postgres-folder
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+spec:
+  activeDeadlineSeconds: 900
+  backoffLimit: 1
+  template:
+    metadata:
+      name: job-create-postgres-folder
+    spec:
+      imagePullSecrets:
+      - name: registrysecret
+      nodeSelector:
+        "kubernetes.io/hostname": vrms-09
+      containers:
+      - name: alpine
+        image: alpine:3.12.1
+        command: ['/bin/sh', '-e', '-c', 'ls /mnt/local-storage/postgres-veverse-{{ .Values.werf.env }} || mkdir -p /mnt/local-storage/postgres-veverse-{{ .Values.werf.env }}']
+        volumeMounts:
+        - mountPath: /mnt/local-storage/
+          name: local-storage
+      restartPolicy: Never
+      volumes:
+      - name: local-storage
+        hostPath:
+          path: /mnt/local-storage/
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+data:
+  postgresql.conf: |-
+    # default
+    listen_addresses = '*'
+    log_timezone = 'UTC'
+    timezone = 'UTC'
+    max_connections = 100

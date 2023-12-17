@@ -1,0 +1,28 @@
+db:
+  name:
+    dev: dev
+    test: test
+    prod: prod
+  host:
+    _default: postgres
+  port:
+    _default: 5432
+  user:
+    _default: postgres
+  resources:
+    requests:
+      cpu:
+        _default: 200m
+        test: 500m
+        prod: 500m
+      memory:
+        _default: 128Mi
+        dev: 512Mi
+        test: 1Gi
+        prod: 1Gi
+    limits:
+      memory:
+        _default: 128Mi
+        dev: 512Mi
+        test: 2Gi
+        prod: 2Gi

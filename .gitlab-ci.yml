@@ -1,0 +1,54 @@
+variables:
+  WERF_VERSION: 1.2 ea
+
+stages:
+  - deploy
+
+# Base deployment
+.deploy:
+  stage: deploy
+  script:
+    - source ~/.bashrc
+    - echo $PATH
+    - type multiwerf && source $(multiwerf use ${WERF_VERSION} --as-file)
+    - type werf && source $(werf ci-env gitlab --as-file)
+    - werf converge
+      --namespace ${CI_NAMESPACE}
+      --set "global.ci_url=$(cut -d / -f 3 <<< $CI_ENVIRONMENT_URL)"
+  tags:
+    - werf
+
+Deploy to Dev:
+  extends: .deploy
+  environment:
+    name: dev
+    url: https://dev.db.example.com
+  variables:
+    CI_NAMESPACE: db-dev
+    ENVIRONMENT: dev
+  only:
+    - branches
+
+Deploy to Test:
+  extends: .deploy
+  environment:
+    name: test
+    url: https://test.db.example.com
+  variables:
+    CI_NAMESPACE: db-test
+    ENVIRONMENT: test
+  only:
+    - branches
+  when: manual
+
+Deploy to Production:
+  extends: .deploy
+  environment:
+    name: prod
+    url: https://db.example.com
+  variables:
+    CI_NAMESPACE: db-prod
+    ENVIRONMENT: prod
+  only:
+    - tags
+  when: manual
